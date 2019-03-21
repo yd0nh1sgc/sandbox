@@ -13,11 +13,12 @@ template<class T> T Pop(std::vector<T> &a){ T t = a.back(); a.pop_back(); return
 
 static int fusenodes=0;
 
-std::unique_ptr<BSPNode> BSPClean(std::unique_ptr<BSPNode> n)
+BSPNode *BSPClean(BSPNode *n)
 {
 	// removes empty cells.
 	if(n->convex.verts.size() == 0) 
 	{
+		delete n;
 		return NULL;
 	}
 	if(n->isleaf)
@@ -28,23 +29,37 @@ std::unique_ptr<BSPNode> BSPClean(std::unique_ptr<BSPNode> n)
 		assert(n->under==NULL);
 		return n;
 	}
-	n->under = BSPClean(move(n->under));
-	n->over = BSPClean(move(n->over));
-	if(!n->over) return move(n->under); 
-	if(!n->under) return move(n->over);
+	n->under = BSPClean(n->under);
+	n->over  = BSPClean(n->over );
+	if(!n->over) 
+	{
+		BSPNode *r= n->under; 
+		n->under=NULL;
+		delete n;
+		return r;
+	}
+	if(!n->under)
+	{
+		BSPNode *r= n->over; 
+		n->over=NULL;
+		delete n;
+		return r;
+	}
 	if(n->over->isleaf && n->over->isleaf==n->under->isleaf)  
 	{
 		// prune when both children are leaf cells of the same type
 		n->isleaf = n->over->isleaf;
-        n->over.reset();
-        n->under.reset();
-        n->plane() = float4(0);
+		delete n->over;
+		delete n->under;
+		n->over=n->under=NULL;
+		n->xyz() = float3(0, 0, 0);
+		n->w  =0;
 	}
 	assert(n->convex.verts.size());
 	return n;
 }
 
-void BSPPartition(std::unique_ptr<BSPNode> n, const float4 &p, std::unique_ptr<BSPNode> & nodeunder, std::unique_ptr<BSPNode> & nodeover) {
+void BSPPartition(BSPNode *n, const float4 &p, BSPNode * &nodeunder, BSPNode * &nodeover) {
 	nodeunder=NULL;
 	nodeover =NULL;
 	if(!n) {
@@ -56,11 +71,11 @@ void BSPPartition(std::unique_ptr<BSPNode> n, const float4 &p, std::unique_ptr<B
 	//assert(flag==SplitTest(*n->convex,p));
 	flag = n->convex.SplitTest(p);
 	if(flag == UNDER) {
-		nodeunder = move(n);
+		nodeunder = n;
 		return;
 	}
 	if(flag==OVER) {
-		nodeover = move(n);
+		nodeover = n;
 		return;
 	}
 	assert(flag==SPLIT);
@@ -68,8 +83,8 @@ void BSPPartition(std::unique_ptr<BSPNode> n, const float4 &p, std::unique_ptr<B
 //	Polyhedron *cellunder = PolyhedronDup(n->cell);
 //	cellunder->Crop(p);
 //	cellover->Crop(Plane(-p.normal,-p.dist));
-	nodeunder.reset(new BSPNode(n->xyz(), n->w));
-	nodeover.reset(new BSPNode(n->xyz(),n->w));
+	nodeunder = new BSPNode(n->xyz(), n->w);
+	nodeover  = new BSPNode(n->xyz(),n->w);
 	nodeunder->isleaf = n->isleaf;
 	nodeover->isleaf = n->isleaf;
 //	nodeunder->cell= cellunder;
@@ -79,44 +94,60 @@ void BSPPartition(std::unique_ptr<BSPNode> n, const float4 &p, std::unique_ptr<B
 	if(n->isleaf==UNDER) { 
 		int i;
 		BSPNode fake(p.xyz(), p.w);
-		fake.under=move(nodeunder);
-		fake.over=move(nodeover);
+		fake.under=nodeunder;
+		fake.over=nodeover;
 		i=n->brep.size();
 		while(i--){
-			FaceEmbed(&fake, std::move(n->brep[i]));
+			Face *face = n->brep[i];
+			FaceEmbed(&fake,face);
 		}
 		n->brep.clear();
-        nodeunder = move(fake.under);
-        nodeover = move(fake.over);
+		fake.under=fake.over=NULL;
 
 	}
-	BSPPartition(move(n->under), p, nodeunder->under, nodeover->under);
-	BSPPartition(move(n->over), p, nodeunder->over, nodeover->over );
+	BSPPartition(n->under,p,nodeunder->under,nodeover->under);
+	BSPPartition(n->over ,p,nodeunder->over ,nodeover->over );
 	if(n->isleaf) { 
 		assert(nodeunder->isleaf);
 		assert(nodeover->isleaf);
+		n->over=n->under=NULL;
+		delete n;
 		return;
 	} 
 	assert(nodeunder->over || nodeunder->under);
-	assert(nodeover->over || nodeover->under);
-    n.reset();
+	assert(nodeover->over  || nodeover->under);
+	n->over=n->under=NULL;
+	delete n;
+	n=NULL;
 	if(!nodeunder->under) {
 //		assert(SplitTest(nodeunder->cell,*nodeunder)==OVER);
-        nodeunder = move(nodeunder->over);
+		BSPNode *r = nodeunder;
+		nodeunder = nodeunder->over; 
+		r->over=NULL;
+		delete r;
 	}
 	else if(!nodeunder->over) {
 //		assert(SplitTest(nodeunder->cell,*nodeunder)==UNDER);
-        nodeunder = move(nodeunder->under);
+		BSPNode *r = nodeunder;
+		nodeunder = nodeunder->under;
+		r->under=NULL; 
+		delete r;
 	}
 	assert(nodeunder);
 	assert(nodeunder->isleaf || (nodeunder->under && nodeunder->over));
 	if(!nodeover->under) {
 //		assert(SplitTest(nodeover->cell,*nodeover)==OVER);
-        nodeover = move(nodeover->over);
+		BSPNode *r = nodeover;
+		nodeover = nodeover->over; 
+		r->over=NULL;
+		delete r;
 	}
 	else if(!nodeover->over) {
 //		assert(SplitTest(nodeover->cell,*nodeover)==UNDER);
-        nodeover = move(nodeover->under);
+		BSPNode *r = nodeover;
+		nodeover = nodeover->under;
+		r->under = NULL; 
+		delete r;
 	}
 	assert(nodeover);
 	assert(nodeover->isleaf || (nodeover->under && nodeover->over));
@@ -133,8 +164,9 @@ void BSPPartition(std::unique_ptr<BSPNode> n, const float4 &p, std::unique_ptr<B
 			nodeunder->brep.push_back(nodeunder->over->brep[i]);
 		}
 		nodeunder->over->brep.clear();
-        nodeunder->under.reset();
-        nodeunder->over.reset();
+		delete nodeunder->under;
+		delete nodeunder->over;
+		nodeunder->over = nodeunder->under = NULL;
 	}
 	// wtf:	if(!nodeover->isleaf && nodeover->over->isleaf==nodeover->under->isleaf) {
 	if(!nodeover->isleaf && nodeover->over->isleaf && nodeover->over->isleaf==nodeover->under->isleaf) {
@@ -150,8 +182,9 @@ void BSPPartition(std::unique_ptr<BSPNode> n, const float4 &p, std::unique_ptr<B
 			nodeover->brep.push_back(nodeover->over->brep[i]);
 		}
 		nodeover->over->brep.clear();
-        nodeover->under.reset();
-        nodeover->over.reset();
+		delete nodeover->under;
+		delete nodeover->over;
+		nodeover->over = nodeover->under = NULL;
 	}
 /*	if(fusenodes) {
 		if(0==nodeunder->isleaf) {
@@ -180,7 +213,7 @@ void BSPPartition(std::unique_ptr<BSPNode> n, const float4 &p, std::unique_ptr<B
 */
 }
 
-void FaceCutting(BSPNode *n, std::vector<Face> & faces)
+void FaceCutting(BSPNode *n,std::vector<Face*> &faces)
 {
 	if(n->isleaf==OVER)
 	{
@@ -188,31 +221,39 @@ void FaceCutting(BSPNode *n, std::vector<Face> & faces)
 	}
 	if(n->isleaf==UNDER)
 	{
+		for(auto &f : faces)
+		{
+			delete f;
+		}
 		faces.clear();
 		return;
 	}
-	std::vector<Face> faces_over;
-	std::vector<Face> faces_under;
-	std::vector<Face> faces_coplanar;
+	std::vector<Face*> faces_over;
+	std::vector<Face*> faces_under;
+	std::vector<Face*> faces_coplanar;
     while (faces.size())
 	{
-		Face f = Pop(faces);
+		Face *f;
+		f= Pop(faces);
 		int s = FaceSplitTest(f, n->plane());
 		if(s==COPLANAR)
-			faces_coplanar.push_back(std::move(f));
+			faces_coplanar.push_back(f);
 		else if(s==UNDER)
-			faces_under.push_back(std::move(f));
+			faces_under.push_back(f);
 		else if(s==OVER)
-			faces_over.push_back(std::move(f));
+			faces_over.push_back(f);
 		else
 		{
 			assert(s==SPLIT);
-			faces_under.push_back(FaceClip(f, n->plane()));
-			faces_over.push_back(FaceClip(std::move(f), -n->plane()));
+			Face *ovr = FaceDup(f);
+			FaceClip(f,(*n));
+			FaceClip(ovr, float4(-n->xyz(), -n->w));
+			faces_under.push_back(f);
+			faces_over.push_back(ovr);
 		}
 	}
-	FaceCutting(n->under.get(),faces_under);
-	FaceCutting(n->over.get(),faces_over);
+	FaceCutting(n->under,faces_under);
+	FaceCutting(n->over,faces_over);
 	for(unsigned int i=0;i<faces_under.size();i++)
 		faces.push_back(faces_under[i]);
 	for (unsigned int i = 0; i<faces_over.size(); i++)
@@ -221,25 +262,25 @@ void FaceCutting(BSPNode *n, std::vector<Face> & faces)
 		faces.push_back(faces_coplanar[i]);
 }
 
-std::unique_ptr<BSPNode> BSPUnion(std::unique_ptr<BSPNode> a, std::unique_ptr<BSPNode> b) {
+BSPNode *BSPUnion(BSPNode *a,BSPNode *b) {
 	if(!a || b->isleaf == UNDER || a->isleaf==OVER) {
 		if(a && b->isleaf==UNDER)
 		{
-			FaceCutting(a.get(), b->brep);
+			FaceCutting(a,b->brep);
 		}
 		return b;
 	}
 	if(a->isleaf == UNDER || b->isleaf==OVER) {
 		return a;
 	}
-	std::unique_ptr<BSPNode> aover;
-	std::unique_ptr<BSPNode> aunder;
+	BSPNode *aover;
+	BSPNode *aunder;
 	// its like "b" is the master, so a should be the little object and b is the area's shell
 	assert(!a->isleaf);
-	BSPPartition(move(a), float4(b->xyz(), b->w), aunder, aover);
+	BSPPartition(a, float4(b->xyz(), b->w), aunder, aover);
 	assert(aunder || aover);
-	b->under = BSPUnion(move(aunder), move(b->under));
-	b->over = BSPUnion(move(aover), move(b->over));
+	b->under = BSPUnion(aunder,b->under);
+	b->over  = BSPUnion(aover ,b->over );
 /*	if(fusenodes) {
 		if(b->over->isleaf == UNDER) {
 			DeriveCells(b->under,b->cell);
@@ -256,43 +297,45 @@ std::unique_ptr<BSPNode> BSPUnion(std::unique_ptr<BSPNode> a, std::unique_ptr<BS
 
 
 int bspmergeallowswap=0;
-std::unique_ptr<BSPNode> BSPIntersect(std::unique_ptr<BSPNode> a, std::unique_ptr<BSPNode> b) 
+BSPNode *BSPIntersect(BSPNode *a,BSPNode *b) 
 {
 	int swapflag;
 	if(!a||a->isleaf == UNDER || b->isleaf==OVER) {
 		if(a&&a->isleaf==UNDER ) {
             while (a->brep.size()) {
-				FaceEmbed(b.get(), Pop(a->brep));
+				FaceEmbed(b,Pop(a->brep));
 			}
 		}
+		delete a;
 		return b;
 	}
 	assert(b);
 	if(b->isleaf == UNDER || a->isleaf==OVER) {
 		if(b->isleaf==UNDER ) {
             while (b->brep.size()) {
-				FaceEmbed(a.get(), Pop(b->brep));
+				FaceEmbed(a,Pop(b->brep));
 			}
 		}
+		delete b;
 		return a;
 	}
 	// I'm not sure about the following bit - it only works if booleaning bsp's cells cover entire area volume too
 	if(bspmergeallowswap)if( SPLIT != (swapflag = b->convex.SplitTest( *a))) {
 		if(swapflag == OVER) {
-			a->over = BSPIntersect(move(a->over), move(b));
+			a->over = BSPIntersect(a->over,b);
 			return a;
 		}
 		if(swapflag == UNDER) {
-			a->under= BSPIntersect(move(a->under), move(b));
+			a->under= BSPIntersect(a->under,b);
 			return a;
 		}
 	}
-	std::unique_ptr<BSPNode> aover;
-	std::unique_ptr<BSPNode> aunder;
+	BSPNode *aover;
+	BSPNode *aunder;
 	// its like "b" is the master, so a should be the little object and b is the area's shell
-	BSPPartition(move(a), float4(b->xyz(), b->w), aunder, aover);
-	b->under = BSPIntersect(move(aunder), move(b->under));
-	b->over  = BSPIntersect(move(aover), move(b->over));
+	BSPPartition(a, float4(b->xyz(), b->w), aunder, aover);
+	b->under = BSPIntersect(aunder,b->under);
+	b->over  = BSPIntersect(aover ,b->over );
 	if(b->over->isleaf && b->over->isleaf==b->under->isleaf) {  // both children are leaves of same type so merge them into parent
         while (b->over->brep.size()) {
 			b->brep.push_back(Pop(b->over->brep));
@@ -302,8 +345,9 @@ std::unique_ptr<BSPNode> BSPIntersect(std::unique_ptr<BSPNode> a, std::unique_pt
 			b->brep.push_back(Pop(b->under->brep));
 		}
 		b->isleaf = b->over->isleaf;
-        b->over.reset();
-        b->under.reset();
+		delete b->over;
+		delete b->under;
+		b->over=b->under=NULL;
 	}
 /*	if(fusenodes) {
 		if(b->over->isleaf == UNDER) {

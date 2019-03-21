@@ -40,20 +40,20 @@ void InitTex()  // create a checkerboard texture
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, imagedim, imagedim, 0, GL_RGBA, GL_UNSIGNED_BYTE, checker_image);
 }
 
-std::vector<Face> WingMeshToFaces(const WingMesh &m)
+std::vector<Face*> WingMeshToFaces(const WingMesh &m)
 {
-	std::vector<Face> faces;
+	std::vector<Face*> faces;
 	assert(m.unpacked == 0);
     assert(m.fback.size() == m.faces.size());
 	int k=0;
 	for(unsigned int i=0;i<m.faces.size();i++)
 	{
-		Face face;
-		face.plane() = m.faces[i];
+		Face *face = new Face();
+		faces.push_back(face);
+		face->plane() = m.faces[i];
 		//extern void texplanar(Face *face);
 		//texplanar(face);
-		face.vertex = m.GenerateFaceVerts(i); //int e0 = m.fback[i],e=e0; do{ face->vertex.push_back(m.verts[m.edges[e].v]);  e = m.edges[e].next;} while (e!=e0);
-		faces.push_back(face);
+		face->vertex = m.GenerateFaceVerts(i); //int e0 = m.fback[i],e=e0; do{ face->vertex.push_back(m.verts[m.edges[e].v]);  e = m.edges[e].next;} while (e!=e0);
 	}
 	return faces;
 }
@@ -84,7 +84,7 @@ void fdraw(const Face &f)
 		glVertex3fv(v);
 	glEnd();
 }
-void fdraw(const std::vector<Face> &faces) { for (auto &f : faces) fdraw(f); }
+void fdraw(const std::vector<Face*> &faces) { for (auto &f : faces) fdraw(*f); }
 
 void DrawWireframe(const WingMesh &m)
 {
@@ -140,8 +140,8 @@ LPSTR lpszCmdLine, int nCmdShow)
 	auto af   = WingMeshToFaces(ac);
 	auto bf   = WingMeshToFaces(bc);
 	auto cf   = WingMeshToFaces(co);
-	std::unique_ptr<BSPNode> bsp;
-	std::vector<Face> faces;
+	BSPNode *bsp=NULL;
+	std::vector<Face*> faces;
 
 
 	GLWin glwin("TestBSP compile and intersect sample");
@@ -179,7 +179,7 @@ LPSTR lpszCmdLine, int nCmdShow)
 				dragmode = 1;
 				float3 v0 = camerapos, v1 = camerapos + qrot(cameraorientation, glwin.MouseVector*100.0f);
 				if (bsp)
-					HitCheck(bsp.get(), 0, v0, v1, &v1);                                        // shorten segment if we hit a face
+					HitCheck(bsp, 0, v0, v1, &v1);                                        // shorten segment if we hit a face
 				auto bhit = ConvexHitCheck(bc.faces, { bpos, { 0, 0, 0, 1 } }, v0, v1);
 				v1 = bhit.impact;                                                         // shorten selection ray if necessary so we pick closest
 				auto chit = ConvexHitCheck(co.faces, { cpos, { 0, 0, 0, 1 } }, v0, v1);
@@ -202,16 +202,16 @@ LPSTR lpszCmdLine, int nCmdShow)
 			auto absp = BSPCompile(af, WingMeshCube(2.0f));        // create spatial structures for our operands
 			auto bbsp = BSPCompile(bf, WingMeshCube(2.0f));
 			auto cbsp = BSPCompile(cf, WingMeshCube(2.0f));
-			BSPTranslate(*bbsp, Round(bpos,0.05f));                 // move to current position for this operand
-			BSPTranslate(*cbsp, Round(cpos,0.05f));
-			NegateTree(*bbsp);                                      // turn it inside-out, so intersection will be a subtraction
-			NegateTree(*cbsp);
+			BSPTranslate(bbsp, Round(bpos,0.05f));                 // move to current position for this operand
+			BSPTranslate(cbsp, Round(cpos,0.05f));
+			NegateTree(bbsp);                                      // turn it inside-out, so intersection will be a subtraction
+			NegateTree(cbsp);
 			// note that there are 
 			extern float qsnap; qsnap = 0.05f;                     // Important. quantization rules for operands to avoid numerical issues.
-			bsp = BSPIntersect(move(cbsp), BSPIntersect(move(bbsp), move(absp)));    // after this point, dont use absp or bbsp or cbsp anymore
-			BSPMakeBrep(bsp.get(), BSPRipBrep(bsp.get()));                     // just regenerate the brep, ensures no T-intersections
+			bsp = BSPIntersect(cbsp, BSPIntersect(bbsp, absp));    // after this point, dont use absp or bbsp or cbsp anymore
+			BSPMakeBrep(bsp, BSPRipBrep(bsp));                     // just regenerate the brep, ensures no T-intersections
 			// BSPMakeBrep(bsp, BSPRipBrep(bsp));                  // uncomment this line to test the ability to extract mat settings from the previous faces
-			faces = BSPRipBrep(bsp.get());                               // brep moved into faces array
+			faces = BSPRipBrep(bsp);                               // brep moved into faces array
 
 			// some extra tests if you are in the mood
 			//	delete bsp;  // lets completely start over
@@ -250,7 +250,7 @@ LPSTR lpszCmdLine, int nCmdShow)
 		}
 		else if (drawmode == 1) // draw the cells
 		{
-			std::vector<BSPNode*> stack = { bsp.get() };  // for non-recursive tree traversal
+			std::vector<BSPNode*> stack = { bsp };  // for non-recursive tree traversal
 			while (stack.size())
 			{
 				auto n = stack.back(); stack.pop_back();
@@ -269,8 +269,8 @@ LPSTR lpszCmdLine, int nCmdShow)
 					gldraw(n->convex.verts,n->convex.GenerateTris());
 					glPopMatrix();
 				}
-				stack.push_back(n->under.get());
-				stack.push_back(n->over.get());
+				stack.push_back(n->under);
+				stack.push_back(n->over);
 			}
 		}
 		else if (drawmode == 2)  // draw the tree planes
@@ -282,7 +282,7 @@ LPSTR lpszCmdLine, int nCmdShow)
 			glColor4f(1, 1, 1, 0.5f);
 			glEnable(GL_BLEND);
 			glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-			glDraw(bsp.get(), camerapos);
+			glDraw(bsp, camerapos);
 		}
 
 		// Restore state
