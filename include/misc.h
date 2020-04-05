@@ -15,19 +15,13 @@
 #include <string>
 #include <iostream>
 #include <fstream>
+#include <strstream>
+#include <sstream>
 #include <vector>
 
 // some misc convenience functions
-template <
-    template <typename, typename> class Container,
-    typename Value,
-    typename Allocator = std::allocator<Value>, typename Func >
-    auto Transform(const Container<Value, Allocator> & input, const Func &f)
-    -> Container<decltype(f(std::declval<Value>())), std::allocator<decltype(f(std::declval<Value>()))>> {
-    Container<decltype(f(std::declval<Value>())), std::allocator<decltype(f(std::declval<Value>()))>> ret;
-    std::transform(std::begin(input), std::end(input), std::back_inserter(ret), f);
-    return ret;
-}
+template<typename F, typename S> auto Transform(std::vector<S> &src, F f) { std::vector<std::result_of_t<F(S)>> dst(src.size()); std::transform(src.begin(), src.end(), dst.begin(), f); return dst; }
+template<typename F, typename S> auto Transform(const std::vector<S> &src, F f) { std::vector<std::result_of_t<F(S)>> dst(src.size()); std::transform(src.begin(), src.end(), dst.begin(), f); return dst; }
 template<class T> std::vector<T> & Append(std::vector<T> &a, const T&  t) { a.push_back(t); return a; }
 template<class T> std::vector<T> & Append(std::vector<T> &a,       T&& t) { a.push_back(std::move(t)); return a; }
 template<class T> std::vector<T> & Append(std::vector<T> &a, const std::vector<T> &b) { a.insert(a.end(), b.begin(), b.end()); return a; }
@@ -56,6 +50,31 @@ inline std::string freefilename(std::string prefix, std::string suffix)  // find
 
 
 
+
+//  ToString() - convenience class/function for using << overloads to generate strings inline within a single expression
+// Example Usage:   return ToString() << "test" << my_vec3 << " more " << my_float_var << " and so on";
+//            or:   set_thermometer_gui_string( ToString() << (temperature*9/5+32) ); 
+struct ToString
+{
+	std::ostringstream o;
+	std::string str() { return o.str(); }
+	operator std::string() { return o.str(); }
+	template<class T>ToString &operator<<(const T &t) { o << t; return *this; }
+};
+
+// StringTo and FromString  - convenience class/function for using >> overloads to convert from strings inline within a single expression
+//    f(StringTo<float3>("6 7 8"));  // if f() is overloaded specify type with StringTo<>()
+//    g(FromString("9"));            // works if g isn't overloaded such as it takes a float
+//
+template<class T> inline  T StringTo(std::string s) { T v; std::istringstream i(std::move(s)); i >> v; return v; }
+
+struct FromString
+{
+	const std::string &s;
+	FromString(const std::string &s) :s(s) {}
+	template<class T> operator T () { return StringTo<T>(s); }
+	operator std::string() { return s; }
+};
 
 
 
